@@ -10,6 +10,7 @@ struct ServerConfigView: View {
     @State private var url: String = StremioServer.isCustom ? StremioServer.base : ""
     @State private var testResult: Bool?
     @State private var testing = false
+    @State private var transcodeMode = ServerTranscode.mode
 
     private var trimmed: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
 
@@ -45,6 +46,8 @@ struct ServerConfigView: View {
 
                 Text("Currently using: \(StremioServer.base)\(StremioServer.isCustom ? "" : "  (embedded)")")
                     .font(.system(size: 18, design: .monospaced)).foregroundStyle(Theme.Palette.textTertiary)
+
+                transcodePicker
             }
             .padding(.horizontal, Theme.Space.screenInset)
             .padding(.vertical, Theme.Space.xl)
@@ -73,6 +76,26 @@ struct ServerConfigView: View {
             .frame(maxWidth: 1000)
             .onSubmit { save() }   // Return submits (the primary interaction on Mac's hardware keyboard)
         #endif
+    }
+
+    /// Server-side transcoding (only applies with a remote server; the embedded one can't).
+    private var transcodePicker: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.sm) {
+            Text("Transcode on Server").font(Theme.Typography.body).foregroundStyle(Theme.Palette.textPrimary)
+            Text("With a remote server, streams this device can't decode in hardware are converted to H.264 by the server. Auto plays everything else directly; Always sends every stream through the server.")
+                .font(Theme.Typography.body).foregroundStyle(Theme.Palette.textSecondary)
+                .frame(maxWidth: 1100, alignment: .leading)
+            HStack(spacing: Theme.Space.md) {
+                ForEach(ServerTranscode.Mode.allCases, id: \.self) { m in
+                    Button {
+                        ServerTranscode.setMode(m)
+                        transcodeMode = m
+                    } label: { Text(m.label) }
+                        .buttonStyle(ChipButtonStyle(selected: transcodeMode == m))
+                }
+            }
+        }
+        .padding(.top, Theme.Space.md)
     }
 
     private func save() {

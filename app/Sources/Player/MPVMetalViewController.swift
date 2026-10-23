@@ -479,10 +479,35 @@ final class MPVMetalViewController: PlatformViewController {
     /// its UA into the next stream.
     private lazy var defaultUserAgent = getString("user-agent") ?? ""
 
+    /// Optional hook the app installs to rewrite a stream URL before mpv opens it (tvOS routes
+    /// playback through a remote server's HLS transcoder with it). Nil loads every URL as-is.
+    static var urlRewriter: (@Sendable (URL, [String: String]?, Bool) async -> URL)?
+    /// Bumped on every load so a slow rewrite can't open a stream the player has since replaced.
+    private var loadGeneration = 0
+
     func loadFile(
         _ url: URL,
         headers: [String: String]? = nil,
         live: Bool = false
+    ) {
+        loadGeneration += 1
+        guard let rewrite = Self.urlRewriter else {
+            loadFileNow(url, headers: headers, live: live)
+            return
+        }
+        let generation = loadGeneration
+        Task { @MainActor [weak self] in
+            let resolved = await rewrite(url, headers, live)
+            guard let self, self.loadGeneration == generation, self.mpv != nil else { return }
+            // A rewritten URL points at the server, which fetched the stream itself.
+            self.loadFileNow(resolved, headers: resolved == url ? headers : nil, live: live)
+        }
+    }
+
+    private func loadFileNow(
+        _ url: URL,
+        headers: [String: String]?,
+        live: Bool
     ) {
         var args = [url.absoluteString]
         var options = [String]()

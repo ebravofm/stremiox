@@ -20,6 +20,10 @@ struct StremioTVApp: App {
             Task.detached(priority: .utility) { await StremioServer.applyServerConfig() }
         }
         #endif
+        // With a remote server set, play what this Apple TV can't decode through its transcoder.
+        MPVMetalViewController.urlRewriter = { url, headers, live in
+            await ServerTranscode.playbackURL(for: url, headers: headers, live: live)
+        }
         // Boot the native stremio-core engine (hydrates library/profile from storage, starts the
         // event loop). The schema-version log is an end-to-end smoke check of the Rust⇄Swift FFI.
         CoreBridge.shared.start()
