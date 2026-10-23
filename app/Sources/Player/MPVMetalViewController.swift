@@ -347,6 +347,22 @@ final class MPVMetalViewController: PlatformViewController {
         mpvLog.log("audio-channels = \(self.channelPolicy, privacy: .public), audio-samplerate = \(self.sampleRatePolicy.map(String.init) ?? "content", privacy: .public) (route \(self.outputChannels) ch @ \(Int(self.outputSampleRate)) Hz)")
         #endif
 
+        // On-device diagnostics: mpv writes its log to Caches/mpv.log, and an optional
+        // Caches/mpv-overrides.conf (one `option=value` per line, `#` comments) is applied last, so
+        // the video output or decoder can be tried out over SSH without a rebuild.
+        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+        checkError(mpv_set_option_string(mpv, "log-file", caches.appendingPathComponent("mpv.log").path))
+        if let text = try? String(contentsOf: caches.appendingPathComponent("mpv-overrides.conf"), encoding: .utf8) {
+            for line in text.split(whereSeparator: \.isNewline) {
+                let entry = line.trimmingCharacters(in: .whitespaces)
+                guard !entry.hasPrefix("#"), let eq = entry.firstIndex(of: "=") else { continue }
+                let name = entry[..<eq].trimmingCharacters(in: .whitespaces)
+                let value = entry[entry.index(after: eq)...].trimmingCharacters(in: .whitespaces)
+                checkError(mpv_set_option_string(mpv, name, value))
+                mpvLog.log("override \(name, privacy: .public) = \(value, privacy: .public)")
+            }
+        }
+
         checkError(mpv_initialize(mpv))
         
         mpv_observe_property(mpv, 0, MPVProperty.videoParamsSigPeak, MPV_FORMAT_DOUBLE)
