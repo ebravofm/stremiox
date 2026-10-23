@@ -51,10 +51,37 @@ final class MPVMetalViewController: PlatformViewController {
     /// on the Metal/MoltenVK backend and known to crash it (double free); the app
     /// does the HDR signalling itself in syncDisplayDynamicRange.
     private var appliedDynamicRange: ContentDynamicRange = .sdr
-    
+
+    #if os(tvOS)
+    /// The OpenGL ES video output when VideoOutput picks it (the Apple TV HD); nil on Vulkan.
+    private var glRenderer: MPVGLRenderer?
+    #endif
+
+    /// Whether mpv draws through OpenGL ES instead of the Metal layer (Vulkan).
+    private var usesOpenGL: Bool {
+        #if os(tvOS)
+        return glRenderer != nil
+        #else
+        return false
+        #endif
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
-        
+
+        #if os(tvOS)
+        if VideoOutput.usesOpenGL, let renderer = MPVGLRenderer(frame: view.bounds) {
+            view.backgroundColor = .black
+            view.addSubview(renderer.view)
+            glRenderer = renderer
+            setupMpv()
+            if let url = playUrl {
+                loadFile(url, headers: playHeaders, live: playUrlLive)
+            }
+            return
+        }
+        #endif
+
         metalLayer.frame = view.bounds
         metalLayer.framebufferOnly = true
         // Insurance against render-thread/main-thread deadlocks: the drawable present must never wait
@@ -107,7 +134,8 @@ final class MPVMetalViewController: PlatformViewController {
     /// above forward here). Shared across UIKit and AppKit.
     private func layoutDrawable() {
         let size = view.bounds.size
-        guard size.width > 1, size.height > 1 else { return }
+        // The GL view autoresizes and mpv renders at the drawable's size on every frame.
+        guard !usesOpenGL, size.width > 1, size.height > 1 else { return }
         let didResize = lastLaidOutSize != .zero && size != lastLaidOutSize
 
         // Always size the drawable to the current bounds, not only on resize. If the first layout
@@ -238,7 +266,9 @@ final class MPVMetalViewController: PlatformViewController {
 #if os(macOS)
         checkError(mpv_set_option_string(mpv, "input-media-keys", "yes"))
 #endif
-        checkError(mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &metalLayer))
+        if !usesOpenGL {
+            checkError(mpv_set_option(mpv, "wid", MPV_FORMAT_INT64, &metalLayer))
+        }
         checkError(mpv_set_option_string(mpv, "subs-match-os-language", "yes"))
         checkError(mpv_set_option_string(mpv, "subs-fallback", "yes"))
         // Point libass at the bundled fonts for non-Latin subtitle rendering. Every target ships
@@ -255,9 +285,14 @@ final class MPVMetalViewController: PlatformViewController {
         for (name, value) in SubtitleStyle.mpvOptions {
             checkError(mpv_set_option_string(mpv, name, value))
         }
-        checkError(mpv_set_option_string(mpv, "vo", "gpu-next"))
-        checkError(mpv_set_option_string(mpv, "gpu-api", "vulkan"))
-        checkError(mpv_set_option_string(mpv, "gpu-context", "moltenvk"))
+        if usesOpenGL {
+            // mpv's render API; MPVGLRenderer draws it into a GLKView (see VideoOutput).
+            checkError(mpv_set_option_string(mpv, "vo", "libmpv"))
+        } else {
+            checkError(mpv_set_option_string(mpv, "vo", "gpu-next"))
+            checkError(mpv_set_option_string(mpv, "gpu-api", "vulkan"))
+            checkError(mpv_set_option_string(mpv, "gpu-context", "moltenvk"))
+        }
         // Hardware-decode via VideoToolbox on both device and the (Apple-Silicon) simulator.
         // This keeps decoded frames as GPU textures, which matters for more than speed: software
         // decode puts frames in CPU memory, forcing libplacebo to upload them via a PBO, and
@@ -364,7 +399,11 @@ final class MPVMetalViewController: PlatformViewController {
         }
 
         checkError(mpv_initialize(mpv))
-        
+
+        #if os(tvOS)
+        glRenderer?.attach(to: mpv)   // a failure is logged; playback then has audio only, as on Vulkan
+        #endif
+
         mpv_observe_property(mpv, 0, MPVProperty.videoParamsSigPeak, MPV_FORMAT_DOUBLE)
         mpv_observe_property(mpv, 0, MPVProperty.pausedForCache, MPV_FORMAT_FLAG)
         mpv_observe_property(mpv, 0, MPVProperty.timePos, MPV_FORMAT_DOUBLE)
@@ -462,6 +501,10 @@ final class MPVMetalViewController: PlatformViewController {
 #endif
         appliedDynamicRange = .sdr
         guard let handle = mpv else { return }
+        #if os(tvOS)
+        // The render context must be freed before its core starts shutting down.
+        glRenderer?.detach()
+        #endif
         // Nil the handle SYNCHRONOUSLY so exactly one owner destroys it: deinit's safety net
         // sees nil (no double terminate when dealloc beats the queued block), the event drain
         // stops picking it up, and every property accessor becomes a guarded no-op.
@@ -484,6 +527,9 @@ final class MPVMetalViewController: PlatformViewController {
         // Safety net: if the view controller is torn down without stop() (e.g. an
         // unexpected dealloc), make sure mpv can't call back into freed memory.
         if let handle = mpv {
+            #if os(tvOS)
+            glRenderer?.detach()
+            #endif
             mpv_set_wakeup_callback(handle, nil, nil)
             mpv = nil
             mpv_terminate_destroy(handle)
@@ -619,7 +665,8 @@ final class MPVMetalViewController: PlatformViewController {
     /// is what lights the TV's HDR badge). Runs on the main thread from the
     /// sig-peak observer, once per video reconfigure.
     private func syncDisplayDynamicRange(sigPeak: Double) {
-        guard let handle = mpv else { return }
+        // OpenGL ES output is SDR only (the A8 has no HDR path); the Metal layer it tags is unused.
+        guard let handle = mpv, !usesOpenGL else { return }
         let gamma = getString(MPVProperty.videoParamsGamma) ?? ""
         var range: ContentDynamicRange
         if gamma == "hlg" {
