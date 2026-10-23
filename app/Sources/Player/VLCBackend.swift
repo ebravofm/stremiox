@@ -32,7 +32,17 @@ final class VLCBackend {
     /// Same Safari user agent mpv presents: debrid resolvers 500/504 on library user agents.
     private static let userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
 
-    init(emit: @escaping (String, Any?) -> Void) { self.emit = emit }
+    /// Copies libVLC's warnings and errors into diagnostics.log while the player is open.
+    private var logTask: Task<Void, Never>?
+
+    init(emit: @escaping (String, Any?) -> Void) {
+        self.emit = emit
+        logTask = Task.detached(priority: .utility) {
+            for await entry in VLCInstance.shared.logStream(minimumLevel: .warning) {
+                DiagnosticsLog.log("vlc-log", "[\(entry.level)] \(entry.module ?? "-"): \(entry.message)")
+            }
+        }
+    }
 
     /// Put VLC's video surface under everything else in `parent`'s view.
     func attach(to parent: UIViewController) {
@@ -47,7 +57,27 @@ final class VLCBackend {
         self.host = host
     }
 
+    /// Waits for the video surface to be on screen before a load starts (see `load`).
+    private var surfaceWait: Timer?
+
+    /// SwiftVLC hands its surface to libVLC only once the view is in a window with a size. Started
+    /// before that (the controller loads from viewDidLoad), libVLC opens with nowhere to draw: no
+    /// video output starts, the decoders fill up, the demuxer stops reading and playback hangs on
+    /// the spinner. So the load waits for the surface, lays it out, and starts on the next turn.
     func load(_ url: URL, headers: [String: String]?) {
+        surfaceWait?.invalidate(); surfaceWait = nil
+        guard let view = host?.view, view.window != nil, view.bounds.width > 0 else {
+            surfaceWait = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
+                MainActor.assumeIsolated { self?.load(url, headers: headers) }
+            }
+            return
+        }
+        view.layoutIfNeeded()
+        DispatchQueue.main.async { [weak self] in self?.start(url, headers: headers) }
+    }
+
+    private func start(_ url: URL, headers: [String: String]?) {
+        guard host != nil else { return }   // stopped while waiting
         lastTime = -1; lastDuration = -1; lastPaused = nil; lastBuffering = nil
         lastTrackSignature = ""; endReported = false; pendingSeek = nil; lastAdvance = .distantPast
         do {
@@ -72,6 +102,8 @@ final class VLCBackend {
     }
 
     func stop() {
+        logTask?.cancel(); logTask = nil
+        surfaceWait?.invalidate(); surfaceWait = nil
         poll?.invalidate(); poll = nil
         player.stop()
         host?.willMove(toParent: nil)
