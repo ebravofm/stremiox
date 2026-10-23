@@ -1163,7 +1163,18 @@ struct TVPlayerView: View {
         startRecoveryDeadline()   // first call arms the overall cap; later calls (hops) leave it running
         loadTimeout = Task { @MainActor in
             try? await Task.sleep(for: .seconds(30))
-            guard !hasStartedPlaying else { return }
+            // A load routed through a remote server's transcoder first waits on the server's probe
+            // (not counted) and then on its first segments of every track (a longer budget).
+            while !Task.isCancelled, !hasStartedPlaying, let player = coordinator.player {
+                guard let issued = player.fileLoadIssuedAt else {
+                    try? await Task.sleep(for: .seconds(2))   // the URL is still being resolved
+                    continue
+                }
+                let left = (player.fileLoadRewritten ? 60 : 30) - Date().timeIntervalSince(issued)
+                if left <= 0 { break }
+                try? await Task.sleep(for: .seconds(left))
+            }
+            guard !Task.isCancelled, !hasStartedPlaying else { return }
             if isTorrentPlayback {
                 warmUpTorrent()
                 return

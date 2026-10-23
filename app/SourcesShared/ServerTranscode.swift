@@ -49,10 +49,7 @@ enum ServerTranscode {
     /// The URL mpv should open for a stream: the server's HLS master playlist when transcoding
     /// applies, otherwise the stream URL unchanged.
     static func playbackURL(for url: URL, headers: [String: String]?, live: Bool) async -> URL {
-        guard StremioServer.isCustom, mode != .off, !live,
-              headers?.isEmpty ?? true,   // the transcoder can't apply add-on request headers
-              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
-              !url.path.contains("/hlsv2/"),
+        guard applies(to: url, headers: headers, live: live),
               let base = URL(string: StremioServer.base) else { return url }
         let media = serverSideURL(for: url, base: base)
 
@@ -75,6 +72,16 @@ enum ServerTranscode {
             }
         }
         return hlsURL(media: media, force: force) ?? url
+    }
+
+    /// Whether `playbackURL` could route this stream through the server at all. Synchronous, so
+    /// streams it can't apply to load immediately.
+    static func applies(to url: URL, headers: [String: String]?, live: Bool) -> Bool {
+        guard StremioServer.isCustom, mode != .off, !live,
+              headers?.isEmpty ?? true,   // the transcoder can't apply add-on request headers
+              let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https",
+              !url.path.contains("/hlsv2/") else { return false }
+        return true
     }
 
     // MARK: - Decision

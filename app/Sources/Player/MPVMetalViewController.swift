@@ -482,8 +482,16 @@ final class MPVMetalViewController: PlatformViewController {
     /// Optional hook the app installs to rewrite a stream URL before mpv opens it (tvOS routes
     /// playback through a remote server's HLS transcoder with it). Nil loads every URL as-is.
     static var urlRewriter: (@Sendable (URL, [String: String]?, Bool) async -> URL)?
+    /// Cheap synchronous check for whether `urlRewriter` could change a URL at all; when it says
+    /// no, the file loads immediately, exactly as without the hook.
+    static var urlRewriteApplies: ((URL, [String: String]?, Bool) -> Bool)?
     /// Bumped on every load so a slow rewrite can't open a stream the player has since replaced.
     private var loadGeneration = 0
+    /// When mpv was actually handed the current file (nil while a rewrite is still resolving),
+    /// so load timeouts can leave out the time the rewrite took.
+    private(set) var fileLoadIssuedAt: Date?
+    /// Whether the current file was rewritten (it comes from a remote server's transcoder).
+    private(set) var fileLoadRewritten = false
 
     func loadFile(
         _ url: URL,
@@ -491,15 +499,18 @@ final class MPVMetalViewController: PlatformViewController {
         live: Bool = false
     ) {
         loadGeneration += 1
-        guard let rewrite = Self.urlRewriter else {
+        guard let rewrite = Self.urlRewriter, Self.urlRewriteApplies?(url, headers, live) ?? true else {
+            fileLoadRewritten = false
             loadFileNow(url, headers: headers, live: live)
             return
         }
+        fileLoadIssuedAt = nil
         let generation = loadGeneration
         Task { @MainActor [weak self] in
             let resolved = await rewrite(url, headers, live)
             guard let self, self.loadGeneration == generation, self.mpv != nil else { return }
             // A rewritten URL points at the server, which fetched the stream itself.
+            self.fileLoadRewritten = resolved != url
             self.loadFileNow(resolved, headers: resolved == url ? headers : nil, live: live)
         }
     }
@@ -558,6 +569,7 @@ final class MPVMetalViewController: PlatformViewController {
 
         mpvLog.log("loadFile → \(url.absoluteString, privacy: .public)")
         command("loadfile", args: args)
+        fileLoadIssuedAt = Date()
     }
 
     private func configureLiveMode(_ live: Bool) {

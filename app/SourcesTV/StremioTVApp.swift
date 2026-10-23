@@ -24,6 +24,9 @@ struct StremioTVApp: App {
         MPVMetalViewController.urlRewriter = { url, headers, live in
             await ServerTranscode.playbackURL(for: url, headers: headers, live: live)
         }
+        MPVMetalViewController.urlRewriteApplies = { url, headers, live in
+            ServerTranscode.applies(to: url, headers: headers, live: live)
+        }
         // Boot the native stremio-core engine (hydrates library/profile from storage, starts the
         // event loop). The schema-version log is an end-to-end smoke check of the Rust⇄Swift FFI.
         CoreBridge.shared.start()
