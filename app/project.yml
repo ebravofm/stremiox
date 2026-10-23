@@ -8,6 +8,10 @@ packages:
   MPVKit:
     url: https://github.com/mpvkit/MPVKit
     exactVersion: "0.41.0"
+  # libVLC for the tvOS apps' VLC engine (PlayerEngine): mpv can't show video on the Apple TV HD.
+  SwiftVLC:
+    url: https://github.com/harflabs/SwiftVLC
+    exactVersion: "1.0.0"
 targets:
   StremioX:
     type: application
@@ -168,6 +172,7 @@ targets:
     dependencies:
       - package: MPVKit
         product: MPVKit-GPL
+      - package: SwiftVLC
       - framework: Vendor/nodejs-mobile/NodeMobile.xcframework
         embed: true
         codeSign: true
@@ -183,6 +188,7 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stremiox.tv
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STREMIOX_VLC"
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Player/StremioX-Bridging.h
         MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "97"
@@ -213,6 +219,7 @@ targets:
     dependencies:
       - package: MPVKit
         product: MPVKit-GPL
+      - package: SwiftVLC
       # The Rust stremio-core engine (staticlib xcframework), linked, not embedded.
       - framework: Vendor/StremioXCore.xcframework
         embed: false
@@ -221,7 +228,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.stremiox.tv.lite
         SWIFT_OBJC_BRIDGING_HEADER: Sources/Player/StremioX-Bridging.h
-        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STREMIOX_NO_EMBEDDED_SERVER"
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) STREMIOX_NO_EMBEDDED_SERVER STREMIOX_VLC"
         MARKETING_VERSION: "0.3.0"
         CURRENT_PROJECT_VERSION: "97"
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
