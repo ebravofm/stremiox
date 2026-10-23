@@ -87,12 +87,22 @@ jobs:
       - name: Build (unsigned Release, same as the published builds)
         run: |
           cd app
+          # libVLC's libc compat objects must not reach the tvOS executables (see the script).
+          ../scripts/patch-libvlc.sh StremioX.xcodeproj StremioXTV build/ci
+          ../scripts/patch-libvlc.sh StremioX.xcodeproj StremioXTVLite build/ci-lite
           xcodebuild -project StremioX.xcodeproj -scheme StremioXTV \
             -configuration Release -destination 'generic/platform=tvOS' \
             -derivedDataPath build/ci CODE_SIGNING_ALLOWED=NO build
           xcodebuild -project StremioX.xcodeproj -scheme StremioXTVLite \
             -configuration Release -destination 'generic/platform=tvOS' \
             -derivedDataPath build/ci-lite CODE_SIGNING_ALLOWED=NO build
+          for app in build/ci/Build/Products/Release-appletvos/StremioXTV.app/StremioXTV \
+                     build/ci-lite/Build/Products/Release-appletvos/StremioXTVLite.app/StremioXTVLite; do
+            if nm -m "$app" | grep -E ' external _(clock_gettime|clock_getres|timespec_get|aligned_alloc)$'; then
+              echo "::error::$app defines libc clock/alloc symbols that shadow libSystem"
+              exit 1
+            fi
+          done
           xcodebuild -project StremioX.xcodeproj -scheme StremioXiOSNative \
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath build/ci-ios CODE_SIGNING_ALLOWED=NO build
