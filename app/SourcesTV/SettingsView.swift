@@ -23,7 +23,6 @@ struct SettingsView: View {
     @AppStorage(PlaybackSettings.Key.directLinksOnly) private var directLinksOnly = false
     @AppStorage(PerformanceMode.overrideKey) private var perfMode = "auto"
     @AppStorage(AudioOutputMode.key) private var audioOutput = AudioOutputMode.auto.rawValue
-    @AppStorage(PlayerEngine.key) private var playerEngine = PlayerEngine.auto.rawValue
     @ObservedObject private var sourcePrefs = SourcePreferences.shared
 
     var body: some View {
@@ -167,9 +166,6 @@ struct SettingsView: View {
             }
             choiceRow("Audio output", AudioOutputMode.allCases.map { ($0.rawValue, $0.label) }, selection: $audioOutput)
             Text(AudioOutputMode(rawValue: audioOutput)?.detail ?? "")
-                .font(Theme.Typography.label).foregroundStyle(Theme.Palette.textSecondary)
-            choiceRow("Video player", PlayerEngine.allCases.map { ($0.rawValue, $0.label) }, selection: $playerEngine)
-            Text(PlayerEngine(rawValue: playerEngine)?.detail ?? "")
                 .font(Theme.Typography.label).foregroundStyle(Theme.Palette.textSecondary)
         }
     }

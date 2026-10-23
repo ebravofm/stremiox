@@ -77,7 +77,7 @@ jobs:
       - name: Generate the Xcode project
         run: cd app && xcodegen generate
 
-      # MPVKit and libVLC are large downloads; keep the resolved packages between runs.
+      # MPVKit is a large download; keep the resolved packages between runs.
       - name: Cache Swift packages
         uses: actions/cache@v4
         with:
@@ -87,15 +87,9 @@ jobs:
       - name: Build StremioXTV (unsigned Release)
         run: |
           cd app
-          ../scripts/patch-libvlc.sh StremioX.xcodeproj StremioXTV build/quick
           xcodebuild -project StremioX.xcodeproj -scheme StremioXTV \
             -configuration Release -destination 'generic/platform=tvOS' \
             -derivedDataPath build/quick CODE_SIGNING_ALLOWED=NO build
-          app=build/quick/Build/Products/Release-appletvos/StremioXTV.app/StremioXTV
-          if nm -m "$app" | grep -E ' external _(clock_gettime|clock_getres|timespec_get|aligned_alloc)$'; then
-            echo "::error::$app defines libc clock/alloc symbols that shadow libSystem"
-            exit 1
-          fi
 
       - name: Package the IPA
         run: |

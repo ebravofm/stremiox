@@ -51,52 +51,10 @@ final class MPVMetalViewController: PlatformViewController {
     /// on the Metal/MoltenVK backend and known to crash it (double free); the app
     /// does the HDR signalling itself in syncDisplayDynamicRange.
     private var appliedDynamicRange: ContentDynamicRange = .sdr
-
-    #if STREMIOX_VLC
-    /// The libVLC engine when PlayerEngine picks it. mpv is never created then (`mpv` stays nil),
-    /// and every public method below hands off to this instead.
-    private var vlc: VLCBackend?
-    #endif
-
-    /// Whether an engine is running (mpv, or VLC in its place).
-    private var hasEngine: Bool {
-        #if STREMIOX_VLC
-        if vlc != nil { return true }
-        #endif
-        return mpv != nil
-    }
-
-    #if STREMIOX_VLC
-    /// Start VLC instead of mpv. Its property reports go straight to the delegate; the delegate's
-    /// `mpv` handle is unused by its only implementation (the Coordinator), so a placeholder fills it.
-    private func setupVLC() {
-        configureAudioSession()
-        let backend = VLCBackend { [weak self] name, data in
-            guard let self, self.vlc != nil else { return }
-            self.playDelegate?.propertyChange(mpv: OpaquePointer(bitPattern: 1)!, propertyName: name, data: data)
-        }
-        backend.attach(to: self)
-        backend.setVideoSize(videoSizeMode)
-        vlc = backend
-        setupNotification()
-        DiagnosticsLog.log("player", "engine = VLC")
-    }
-    #endif
-
+    
     override func viewDidLoad() {
         super.viewDidLoad()
-
-        #if STREMIOX_VLC
-        if PlayerEngine.usesVLC {
-            view.backgroundColor = .black
-            setupVLC()
-            if let url = playUrl {
-                loadFile(url, headers: playHeaders, live: playUrlLive)
-            }
-            return
-        }
-        #endif
-
+        
         metalLayer.frame = view.bounds
         metalLayer.framebufferOnly = true
         // Insurance against render-thread/main-thread deadlocks: the drawable present must never wait
@@ -443,9 +401,6 @@ final class MPVMetalViewController: PlatformViewController {
 
     #if canImport(UIKit)
     @objc public func enterBackground() {
-        #if STREMIOX_VLC
-        if let vlc { vlc.pause(); return }
-        #endif
         // fix black screen issue when app enter foreground again
         pause()
         checkError(mpv_set_option_string(mpv, "vid", "no"))
@@ -457,9 +412,6 @@ final class MPVMetalViewController: PlatformViewController {
         do { try AVAudioSession.sharedInstance().setActive(true) } catch {
             mpvLog.error("AVAudioSession reactivate on foreground failed: \(error.localizedDescription, privacy: .public)")
         }
-        #if STREMIOX_VLC
-        if let vlc { vlc.play(); return }
-        #endif
         applyChannelPolicy()
         checkError(mpv_set_option_string(mpv, "vid", "auto"))
         applyVideoSize { self.setString($0, $1) }   // re-apply size after the rebuild
@@ -509,13 +461,6 @@ final class MPVMetalViewController: PlatformViewController {
         HDRDisplayMode.reset(in: viewIfLoaded?.window)
 #endif
         appliedDynamicRange = .sdr
-        #if STREMIOX_VLC
-        if let vlc {
-            self.vlc = nil
-            vlc.stop()
-            return
-        }
-        #endif
         guard let handle = mpv else { return }
         // Nil the handle SYNCHRONOUSLY so exactly one owner destroys it: deinit's safety net
         // sees nil (no double terminate when dealloc beats the queued block), the event drain
@@ -579,7 +524,7 @@ final class MPVMetalViewController: PlatformViewController {
         let generation = loadGeneration
         Task { @MainActor [weak self] in
             let resolved = await rewrite(url, headers, live)
-            guard let self, self.loadGeneration == generation, self.hasEngine else { return }
+            guard let self, self.loadGeneration == generation, self.mpv != nil else { return }
             // A rewritten URL points at the server, which fetched the stream itself.
             self.fileLoadRewritten = resolved != url
             self.loadFileNow(resolved, headers: resolved == url ? headers : nil, live: live)
@@ -591,13 +536,6 @@ final class MPVMetalViewController: PlatformViewController {
         headers: [String: String]?,
         live: Bool
     ) {
-        #if STREMIOX_VLC
-        if let vlc {
-            vlc.load(url, headers: headers)
-            fileLoadIssuedAt = Date()
-            return
-        }
-        #endif
         var args = [url.absoluteString]
         var options = [String]()
 
@@ -672,9 +610,6 @@ final class MPVMetalViewController: PlatformViewController {
     }
     
     func togglePause() {
-        #if STREMIOX_VLC
-        if let vlc { vlc.togglePause(); return }
-        #endif
         getFlag(MPVProperty.pause) ? play() : pause()
     }
 
@@ -733,31 +668,19 @@ final class MPVMetalViewController: PlatformViewController {
     }
     
     func play() {
-        #if STREMIOX_VLC
-        if let vlc { vlc.play(); return }
-        #endif
         setFlag(MPVProperty.pause, false)
     }
-
+    
     func pause() {
-        #if STREMIOX_VLC
-        if let vlc { vlc.pause(); return }
-        #endif
         setFlag(MPVProperty.pause, true)
     }
 
     func seek(to seconds: Double) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.seek(to: seconds); return }
-        #endif
         command("seek", args: [String(seconds), "absolute"])
     }
 
     /// Relative seek (e.g. -10 / +10), used by the tvOS remote's left/right.
     func seek(by seconds: Double) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.seek(by: seconds); return }
-        #endif
         command("seek", args: [String(format: "%.1f", seconds), "relative"])
     }
 
@@ -802,9 +725,6 @@ final class MPVMetalViewController: PlatformViewController {
 
     /// Read the current audio/subtitle/video tracks from mpv's `track-list`.
     func tracks(ofType type: String) -> [MPVTrack] {
-        #if STREMIOX_VLC
-        if let vlc { return vlc.tracks(ofType: type) }
-        #endif
         guard mpv != nil else { return [] }
         let count = getInt("track-list/count")
         guard count > 0 else { return [] }
@@ -824,9 +744,6 @@ final class MPVMetalViewController: PlatformViewController {
     /// Named chapters from mpv's `chapter-list` (title + start time). Empty for files without chapters.
     /// Read via the same scalar getters as `tracks(ofType:)`, no `MPV_FORMAT_NODE` parsing needed.
     func chapters() -> [MPVChapter] {
-        #if STREMIOX_VLC
-        if let vlc { return vlc.chapters() }
-        #endif
         guard mpv != nil else { return [] }
         let count = getInt("chapter-list/count")
         guard count > 0 else { return [] }
@@ -836,52 +753,25 @@ final class MPVMetalViewController: PlatformViewController {
         }
     }
 
-    func setAudioTrack(_ id: Int) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.setAudioTrack(id); return }
-        #endif
-        setString(MPVProperty.aid, id < 0 ? "no" : String(id))
-    }
-
-    func setSubtitleTrack(_ id: Int) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.setSubtitleTrack(id); return }
-        #endif
-        setString(MPVProperty.sid, id < 0 ? "no" : String(id))
-    }
+    func setAudioTrack(_ id: Int) { setString(MPVProperty.aid, id < 0 ? "no" : String(id)) }
+    func setSubtitleTrack(_ id: Int) { setString(MPVProperty.sid, id < 0 ? "no" : String(id)) }
 
     /// Load an external subtitle (an add-on URL) and select it. mpv fetches the file itself
     /// and the new track joins track-list, so the subtitles panel lists it like any embedded
     /// one from then on; `title`/`lang` label it there.
     func addExternalSubtitle(url: String, title: String, lang: String) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.addExternalSubtitle(url: url); return }
-        #endif
         command("sub-add", args: [url, "select", title, lang])
     }
 
     /// Manual subtitle sync, in seconds (positive = subtitles appear later). Maps to mpv `sub-delay`.
-    func setSubDelay(_ seconds: Double) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.setSubDelay(seconds); return }
-        #endif
-        setString("sub-delay", String(format: "%.2f", seconds))
-    }
+    func setSubDelay(_ seconds: Double) { setString("sub-delay", String(format: "%.2f", seconds)) }
 
     /// Manual audio sync, in seconds. Maps to mpv `audio-delay`.
-    func setAudioDelay(_ seconds: Double) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.setAudioDelay(seconds); return }
-        #endif
-        setString("audio-delay", String(format: "%.2f", seconds))
-    }
+    func setAudioDelay(_ seconds: Double) { setString("audio-delay", String(format: "%.2f", seconds)) }
 
     /// Current media summary for the player's metadata line: encoded video height (e.g. 2160) and the
     /// active audio codec (e.g. "eac3"). Both can be 0/"" early in load, before the first frame.
     func mediaSummary() -> (height: Int, audioCodec: String) {
-        #if STREMIOX_VLC
-        if let vlc { return vlc.mediaSummary() }
-        #endif
         guard mpv != nil else { return (0, "") }
         return (getInt("video-params/h"), getString("audio-codec-name") ?? "")
     }
@@ -896,9 +786,6 @@ final class MPVMetalViewController: PlatformViewController {
     func setVideoSize(_ mode: String) {
         videoSizeMode = mode
         UserDefaults.standard.set(mode, forKey: "stremiox.videoSize")
-        #if STREMIOX_VLC
-        if let vlc { vlc.setVideoSize(mode); return }
-        #endif
         applyVideoSize { self.setString($0, $1) }
     }
 
@@ -912,12 +799,7 @@ final class MPVMetalViewController: PlatformViewController {
         }
     }
 
-    func setSpeed(_ speed: Double) {
-        #if STREMIOX_VLC
-        if let vlc { vlc.setSpeed(speed); return }
-        #endif
-        setString(MPVProperty.speed, String(format: "%.2f", speed))
-    }
+    func setSpeed(_ speed: Double) { setString(MPVProperty.speed, String(format: "%.2f", speed)) }
 
     /// Whether VideoToolbox hardware decoding is currently requested (the player's Decoder option).
     private(set) var hardwareDecoding = true
@@ -928,15 +810,11 @@ final class MPVMetalViewController: PlatformViewController {
     /// green frames, unsupported profile); it costs CPU, so hardware stays the default.
     func setHardwareDecoding(_ on: Bool) {
         hardwareDecoding = on
-        guard mpv != nil else { return }   // VLC picks its decoder itself
         setString("hwdec", on ? "videotoolbox" : "no")
     }
 
     /// Live numbers for the player's "Playback info" overlay.
     func playbackStats() -> [(String, String)] {
-        #if STREMIOX_VLC
-        if let vlc { return vlc.playbackStats() }
-        #endif
         guard mpv != nil else { return [] }
         var rows: [(String, String)] = []
         let w = getInt("video-params/w"), h = getInt("video-params/h")
@@ -960,7 +838,6 @@ final class MPVMetalViewController: PlatformViewController {
 
     /// Re-apply the current subtitle appearance to a running player (used after a settings change).
     func applySubtitleStyle() {
-        guard mpv != nil else { return }   // VLC keeps its own subtitle style
         for (name, value) in SubtitleStyle.mpvOptions { setString(name, value) }
     }
 
