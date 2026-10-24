@@ -29,7 +29,10 @@ final class MPVGLRenderer: NSObject, GLKViewDelegate {
     }
 
     init?(frame: CGRect) {
-        guard let context = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2) else { return nil }
+        guard let context = EAGLContext(api: .openGLES3) ?? EAGLContext(api: .openGLES2) else {
+            DiagnosticsLog.log("mpv", "OpenGL ES unavailable (no EAGLContext), falling back to Vulkan")
+            return nil
+        }
         self.context = context
         view = GLKView(frame: frame, context: context)
         super.init()

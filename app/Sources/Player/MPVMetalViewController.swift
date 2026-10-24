@@ -70,7 +70,9 @@ final class MPVMetalViewController: PlatformViewController {
         super.viewDidLoad()
 
         #if os(tvOS)
-        if VideoOutput.usesOpenGL, let renderer = MPVGLRenderer(frame: view.bounds) {
+        let wantsOpenGL = VideoOutput.usesOpenGL
+        DiagnosticsLog.log("mpv", "video output setting=\(VideoOutput.current.rawValue) constrained=\(PerformanceMode.isConstrainedDevice) -> \(wantsOpenGL ? "OpenGL ES" : "Vulkan")")
+        if wantsOpenGL, let renderer = MPVGLRenderer(frame: view.bounds) {
             view.backgroundColor = .black
             view.addSubview(renderer.view)
             glRenderer = renderer
