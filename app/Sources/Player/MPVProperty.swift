@@ -11,6 +11,8 @@ struct MPVProperty {
     static let videoParamsSceneMaxB = "video-params/scene-max-b"
     static let pause = "pause"
     static let pausedForCache = "paused-for-cache"
+    /// True while mpv seeks or restarts playback (including the initial `start=` seek of a load).
+    static let seeking = "seeking"
     static let timePos = "time-pos"
     static let duration = "duration"
     static let trackList = "track-list"

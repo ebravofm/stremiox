@@ -411,6 +411,7 @@ final class MPVMetalViewController: PlatformViewController {
         mpv_observe_property(mpv, 0, MPVProperty.timePos, MPV_FORMAT_DOUBLE)
         mpv_observe_property(mpv, 0, MPVProperty.duration, MPV_FORMAT_DOUBLE)
         mpv_observe_property(mpv, 0, MPVProperty.pause, MPV_FORMAT_FLAG)
+        mpv_observe_property(mpv, 0, MPVProperty.seeking, MPV_FORMAT_FLAG)
         mpv_observe_property(mpv, 0, MPVProperty.trackList, MPV_FORMAT_NONE)
         // mpv gets a retained relay holding a WEAK controller reference, never the controller
         // itself: an unretained `self` was a use-after-free if the wakeup fired (on mpv's
@@ -1012,6 +1013,9 @@ final class MPVMetalViewController: PlatformViewController {
                         case MPVProperty.pause:
                             let paused = UnsafePointer<Bool>(OpaquePointer(property.data))?.pointee ?? false
                             self.emit(propertyName, paused)
+                        case MPVProperty.seeking:
+                            let seeking = UnsafePointer<Bool>(OpaquePointer(property.data))?.pointee ?? false
+                            self.emit(propertyName, seeking)
                         case MPVProperty.trackList:
                             self.emit(propertyName, nil)
                         default: break

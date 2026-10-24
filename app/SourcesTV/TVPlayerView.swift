@@ -66,6 +66,10 @@ struct TVPlayerView: View {
     @State private var loadFailed = false              // playback couldn't start
     @State private var loadErrorMsg = ""
     @State private var hasStartedPlaying = false
+    /// mpv is seeking (or still on a load's initial `start=` seek). time-pos already reports the
+    /// target then, so neither "playback began" nor the stall watchdog may trust it; a transcoded
+    /// stream can sit here for tens of seconds while the server restarts its converter.
+    @State private var seeking = false
     @State private var loadTimeout: Task<Void, Never>?
     @State private var autoRetryCount = 0              // bounded auto-recovery attempts before the error overlay
     @State private var reconnecting = false            // showing the "Reconnecting…" auto-retry state
@@ -146,6 +150,7 @@ struct TVPlayerView: View {
                 .onPropertyChange { _, name, data in
                     switch name {
                     case MPVProperty.pausedForCache: if let b = data as? Bool { buffering = b }
+                    case MPVProperty.seeking: if let b = data as? Bool { seeking = b }
                     case MPVProperty.pause:
                         if let b = data as? Bool {
                             isPaused = b
@@ -154,7 +159,7 @@ struct TVPlayerView: View {
                         }
                     case MPVProperty.timePos:
                         if let d = data as? Double {
-                            if d > 0, !hasStartedPlaying {            // playback actually began
+                            if d > 0, !hasStartedPlaying, !seeking {   // playback actually began
                                 hasStartedPlaying = true; loadTimeout?.cancel(); recoveryDeadline?.cancel(); recoveryDeadline = nil; loadFailed = false
                                 autoRetryCount = 0; reconnecting = false; autoRetryTask?.cancel()   // playback started: clear auto-recovery
                                 // Live has no resumable position, so don't seed Continue-Watching direct-resume
@@ -1128,7 +1133,7 @@ struct TVPlayerView: View {
         stallWatchdog = Task { @MainActor in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(6))
-                guard hasStartedPlaying, !isPaused, !buffering, !loadFailed, duration > 0 else {
+                guard hasStartedPlaying, !isPaused, !buffering, !seeking, !loadFailed, duration > 0 else {
                     lastObservedTime = currentTime; stalledTicks = 0; continue
                 }
                 if lastObservedTime >= 0, abs(currentTime - lastObservedTime) < 0.25 {
