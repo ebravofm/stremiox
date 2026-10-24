@@ -58,7 +58,17 @@ enum ServerTranscode {
         case .always:
             force = true
         case .auto, .off:
-            guard let info = await probe(media) else {
+            // A debrid link sometimes fails one probe and answers the next; retry once.
+            var probed = await probe(media)
+            if probed == nil { probed = await probe(media) }
+            guard let info = probed else {
+                // Without codec info the constrained device can't know direct play is safe (HEVC
+                // there is audio over a blue screen), so let the server decide per track.
+                if PerformanceMode.isConstrainedDevice {
+                    DiagnosticsLog.log("transcode", "probe failed, via server anyway")
+                    force = false
+                    break
+                }
                 DiagnosticsLog.log("transcode", "probe failed, playing directly")
                 return url
             }
