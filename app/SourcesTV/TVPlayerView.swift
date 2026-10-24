@@ -265,6 +265,15 @@ struct TVPlayerView: View {
                     }
                 }
             }
+            // A transcoded load starts at the resume point instead of seeking there once it plays
+            // (which would restart the server's converters). Claiming it marks the resume applied.
+            coordinator.startPosition = {
+                guard !isCurrentLiveStream, !appliedResume, let r = resumeSeconds, r > 5 else { return nil }
+                appliedResume = true
+                currentTime = r
+                lastSaved = r
+                return r
+            }
             showInfo = true; selected = .play; scheduleHide(); startLoadTimeout()
             UIApplication.shared.isIdleTimerDisabled = true   // stop the Apple TV screensaver during playback
             if let m = curMeta {
@@ -1170,7 +1179,9 @@ struct TVPlayerView: View {
                     try? await Task.sleep(for: .seconds(2))   // the URL is still being resolved
                     continue
                 }
-                let left = (player.fileLoadRewritten ? 60 : 30) - Date().timeIntervalSince(issued)
+                // A transcoded start pays the server's per-track converter startup (~10 s each) on a
+                // remote source before the first frame, so it gets four times the direct budget.
+                let left = (player.fileLoadRewritten ? 120 : 30) - Date().timeIntervalSince(issued)
                 if left <= 0 { break }
                 try? await Task.sleep(for: .seconds(left))
             }

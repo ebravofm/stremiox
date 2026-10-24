@@ -556,6 +556,10 @@ final class MPVMetalViewController: PlatformViewController {
     private(set) var fileLoadIssuedAt: Date?
     /// Whether the current file was rewritten (it comes from a remote server's transcoder).
     private(set) var fileLoadRewritten = false
+    /// Asked once per transcoded load for the position to start at (the resume point). Seeking a
+    /// transcoded stream after it starts makes the server restart its converters at the new spot,
+    /// a second full startup; starting there skips the first one.
+    var startPositionProvider: (() -> Double?)?
 
     func loadFile(
         _ url: URL,
@@ -627,7 +631,12 @@ final class MPVMetalViewController: PlatformViewController {
         }
         mpv_set_property_string(mpv, "demuxer-max-bytes", readAhead)
 
+        if fileLoadRewritten, let start = startPositionProvider?() {
+            options.append("start=\(Int(start))")
+        }
+
         if !options.isEmpty {
+            args.append("-1")   // mpv 0.38+: loadfile <url> <flags> <index> <options>
             args.append(options.joined(separator: ","))
         }
 

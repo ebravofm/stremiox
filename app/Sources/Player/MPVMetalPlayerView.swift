@@ -26,6 +26,7 @@ struct MPVMetalPlayerView: PlatformViewControllerRepresentable {
         mpv.playUrlLive = coordinator.playLive
         let coord = context.coordinator
         mpv.onSingleTap = { [weak coord] in coord?.onTap?() }
+        mpv.startPositionProvider = { [weak coord] in coord?.startPosition?() }
         context.coordinator.player = mpv
         return mpv
     }
@@ -78,6 +79,9 @@ struct MPVMetalPlayerView: PlatformViewControllerRepresentable {
         var playLive = false
         var onPropertyChange: ((MPVMetalViewController, String, Any?) -> Void)?
         var onTap: (() -> Void)?
+        /// Where a transcoded load should start (the resume position), claimed once; see
+        /// MPVMetalViewController.startPositionProvider.
+        var startPosition: (() -> Double?)?
 
         func play(_ url: URL) {
             player?.loadFile(url, headers: playHeaders, live: playLive)
